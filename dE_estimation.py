@@ -7,8 +7,8 @@ from openfermion.transforms import get_fermion_operator
 from sdstate import *
 
 if __name__ == "__main__":
-#     Steps to run in Lanczos iteration. Recommand to use no more than 3 for large systems of ~100 qubits
-    steps = 2
+#     Steps to run in Lanczos iteration. Recommand to use no more than 20 for large systems of ~100 qubits
+    steps = 10
 #     Running multiprocessing of Hartree-Fock estimation. Running N threads in parallel for an n-qubit system.
     parallelization = True
     
