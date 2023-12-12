@@ -12,11 +12,14 @@ class sdstate:
     eps = 1e-8
     dic = {}
     n_qubit = 0
-    def __init__(self, s = None, coeff = 1):
+    def __init__(self, s = None, coeff = 1, n_qubit = 0):
         self.dic = {}
+        if n_qubit:
+            self.n_qubit = n_qubit
         if s:
             self.dic[s] = coeff
-            self.n_qubit = len(str(bin(s)))- 2
+            if not self.n_qubit:
+                self.n_qubit = len(str(bin(s)))- 2
             
     def norm(self):
 #         Return the norm of the current state
@@ -74,7 +77,7 @@ class sdstate:
         return count 
     
     def __str__(self):
-        return str({str(bin(k))[min(2, k):][::-1]: self.dic[k] for k in self.dic})
+        return str({str(bin(k))[2:][::-1]: self.dic[k] for k in self.dic})
     
     def exp(self, Hf: of.FermionOperator):
 #         Return the expectation value Hamiltonian on the current state with Hamiltonian in the two-body-tensor form
@@ -84,12 +87,11 @@ class sdstate:
         """
         Return the action of a_p^a_q on the current state.
         """
-        tmp = sdstate()
-        tmp.n_qubit = self.n_qubit
+        tmp = sdstate(n_qubit = self.n_qubit)
         for n in self.dic:
             if actable_pq(n, p, q):
                 t = n ^ (1 << p) ^ (1 << q)
-                tmp += sdstate(t, self.dic[n] * (-1) ** parity_pq(n, p, q))
+                tmp += sdstate(t, self.dic[n] * (-1) ** parity_pq(n, p, q), n_qubit = self.n_qubit)
         return tmp
     
     def Epqrs(self, p, q, r, s):
@@ -97,14 +99,13 @@ class sdstate:
         """
         Return the action of a_p^a_q on the current state.
         """
-        tmp = sdstate()
-        tmp.n_qubit = self.n_qubit
+        tmp = sdstate(n_qubit = self.n_qubit)
         for n in self.dic:
             if actable_pq(n, r, s):
                 t = n ^ (1 << r) ^ (1 << s)
                 if actable_pq(t, p, q):
                     k =  t ^ (1 << p) ^ (1 << q)
-                    tmp += sdstate(k, self.dic[n] * (-1) ** (parity_pq(n, r, s) + parity_pq(k, p, q)))
+                    tmp += sdstate(k, self.dic[n] * (-1) ** (parity_pq(n, r, s) + parity_pq(k, p, q)), n_qubit = self.n_qubit)
         return tmp
 
         
@@ -114,7 +115,7 @@ class sdstate:
         cost is given by O(N^4M), for N as the qubit dimension and M as the size of the current state.
         """
         H = of.transforms.chemist_ordered(Hf)
-        re_state = sdstate()
+        re_state = sdstate(n_qubit = self.n_qubit)
         if multiprocessing:
             with Pool() as pool:
                 res = pool.starmap(self.op_state, [(t, H.terms[t]) for t in H.terms])
@@ -123,22 +124,27 @@ class sdstate:
             return re_state
         for t in H.terms:
             re_state += self.op_state(t, H.terms[t])
-#             if len(t) == 4:
-#                 re_state += H.terms[t] * self.Epqrs(t[0][0], t[1][0], t[2][0], t[3][0])
-#             elif len(t) == 2:
-#                 re_state += H.terms[t] * self.Epq(t[0][0], t[1][0])
-#             elif len(t) == 0:
-#                 re_state += coef * self
         return re_state
 
     def op_state(self, t, coef):
+#         if len(t) == 4:
+#             return coef * self.Epqrs(t[0][0], t[1][0], t[2][0], t[3][0])
+#         elif len(t) == 2:
+#             return coef * self.Epq(t[0][0], t[1][0])
         if len(t) == 4:
-            return coef * self.Epqrs(t[0][0], t[1][0], t[2][0], t[3][0])
+            return coef * self.Epqrs(self.n_qubit - 1 - t[0][0], self.n_qubit - 1 - t[1][0],
+                                     self.n_qubit - 1 - t[2][0], self.n_qubit - 1 - t[3][0])
         elif len(t) == 2:
-            return coef * self.Epq(t[0][0], t[1][0])
+            return coef * self.Epq(self.n_qubit - 1 - t[0][0], self.n_qubit - 1 - t[1][0])
         elif len(t) == 0:
             return coef * self
-        return sdstate()
+        return sdstate(n_qubit = self.n_qubit)
+    
+    def to_vec(self):
+        vec = np.zeros(2 ** self.n_qubit)
+        for i in self.dic:
+            vec[i] = self.dic[i]
+        return vec
     
 def parity_pq(number: int, a, b):
     """Count the number of electrons between p and q bits (p+1, p+2, ... ,q-1), 
@@ -171,10 +177,10 @@ def HF_energy(Hf, n, ne):
     """Find the energy of largest and smallest slater determinant states with Hf as Fermionic Hamiltonian and
      number of electrons as ne.
     """    
-    lstate = sdstate((1 << ne) - 1)
+    lstate = sdstate((1 << ne) - 1, n_qubit = n)
 #         <low|H|low>
     E_low = lstate.exp(Hf)
-    hstate = sdstate(((1 << ne) - 1) << (n-ne))
+    hstate = sdstate(((1 << ne) - 1) << (n-ne), n_qubit = n)
 #         <high|H|high>
     E_high = hstate.exp(Hf)
     return E_high, E_low
@@ -207,11 +213,11 @@ def HF_spectrum_range(Hf, multiprocessing = True):
         high_state = ""
         for ne in range(n):
             low_int = (1 << ne) - 1
-            lstate = sdstate(low_int)
+            lstate = sdstate(low_int, n_qubit = n)
     #         <low|H|low>
             E_low = lstate.exp(Hf)
             high_int = ((1 << ne) - 1) << (n-ne)
-            hstate = sdstate(high_int)
+            hstate = sdstate(high_int, n_qubit = n)
     #         <high|H|high>
             E_high = hstate.exp(Hf)
             if E_low < low:
@@ -238,7 +244,7 @@ def lanczos(Hf: of.FermionOperator, steps, state = None, ne = None):
     if state == None:
         if ne == None:
             ne = n_qubits // 2
-        state = sdstate(int("1"*ne + "0"*(n_qubits - ne), 2))
+        state = sdstate(int("1"*ne + "0"*(n_qubits - ne), 2), n_qubit = n_qubits)
         
     tmp = state @ Hf
     ai = tmp @ state
@@ -274,14 +280,14 @@ def lanczos_total_range(Hf, steps, states = [], multiprocessing = True):
     number of electrons. State is in the form of list of binary strings, indicating the maximum and minimum 
     HF energy states to start the iteration.
     """
+    n = of.utils.count_qubits(Hf)
     if states != []:
         [max_str, min_str] = states
-        max_state = sdstate(int(max_str[::-1], 2))
-        min_state = sdstate(int(min_str[::-1], 2))
+        max_state = sdstate(int(max_str[::-1], 2), n_qubit = n)
+        min_state = sdstate(int(min_str[::-1], 2), n_qubit = n)
         E_max, _ = lanczos_range(Hf, steps = steps, state = max_state)
         _, E_min = lanczos_range(Hf, steps = steps, state = min_state)
     else:
-        n = of.utils.count_qubits(Hf)
         if multiprocessing:
             with Pool() as pool:
                 res = pool.starmap(lanczos_range, [(Hf, steps, None, ne) for ne in range(n)])
