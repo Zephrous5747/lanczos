@@ -8,12 +8,12 @@ from sdstate import *
 
 if __name__ == "__main__":
 #     Steps to run in Lanczos iteration. Recommand to use no more than 20 for large systems of ~100 qubits
-    steps = 10
+    steps = 3
 #     Running multiprocessing of Hartree-Fock estimation. Running N threads in parallel for an n-qubit system.
     parallelization = True
     
     instance_info_cat = []
-    path = "hamiltonians_catalysts/"
+    path = "D:/Dev Tools/Python/Scripts/codes/Hamiltonians/hamiltonians_catalysts/"
     file_name = "7_melact_6-311++G___18_116c0129-525c-456b-a6ac-34b830f64bc3.hdf5"
     with h5py.File(path + file_name, mode="r") as h5f:
         attributes = dict(h5f.attrs.items())

@@ -118,12 +118,17 @@ class sdstate:
         self.remove_zeros()
         return str({int_to_str(k, self.n_qubit): self.dic[k] for k in self.dic})
     
-    def exp(self, Hf: of.FermionOperator):
-#         Return the expectation value Hamiltonian on the current state with Hamiltonian in the two-body-tensor form
+    def exp(self, Hf):
+        """Return the expectation value Hamiltonian on the current state with Hamiltonian in the form of either
+        of.FermionOperator, 1e or 2e tensor, or a tuple of (1e, 2e) tensor
+        """
         if isinstance(Hf, of.FermionOperator):
             return np.real(self @ self.Hf_state(Hf))
         elif isinstance(Hf, np.ndarray):
             return np.real(self @ self.tensor_state(Hf))
+#         Handles a tuple of 1e and 2e tensor
+        elif isinstance(Hf, tuple):
+            return self.exp(Hf[0]) + self.exp(Hf[1])
         print("Invalid input of Hf")
         return -1
     
@@ -325,20 +330,30 @@ def HF_spectrum_range(Hf, multiprocessing = True):
     return high_str, low_str, high, low
 
 
-def lanczos(Hf: of.FermionOperator, steps, state = None, ne = None):
-    """Applies lanczos iteration on the given 2e tensor Hf, with number of steps given by steps,
+def lanczos(Hf, steps, state = None, ne = None):
+    """Applies lanczos iteration on the given FermionOperator Hf, or a tuple of 1e and 2e tensor with number of steps 
+    given by steps,
     with initial state as input or number of electrons as input ne.
     Returns normalized states in each iteration, and a tridiagonal matrix with main diagonal in A and sub-diagonal in B.
     """
-    n_qubits = of.utils.count_qubits(Hf)
+    flag_tuple = False
+    if isinstance(Hf, tuple):
+        assert len(Hf) == 2, "Incorrect input of Hf"
+        flag_tuple = True
+        n_qubits = Hf[0].shape[0]
+    else:
+        n_qubits = of.utils.count_qubits(Hf)
+        
     if state == None:
         if ne == None:
             ne = n_qubits // 2
         state = sdstate(int("1"*ne + "0"*(n_qubits - ne), 2), n_qubit = n_qubits)
         state += sdstate(int("0"*(n_qubits - ne) + "1" * ne, 2), n_qubit = n_qubits)
-        
     state.normalize()
-    tmp = state.Hf_state(Hf)
+    if flag_tuple:
+        tmp = state.tensor_state(Hf[0]) + state.tensor_state(Hf[1]) 
+    else:
+        tmp = state.Hf_state(Hf)
     ai = tmp @ state
     tmp -= ai * state
     A = [ai]
@@ -349,7 +364,10 @@ def lanczos(Hf: of.FermionOperator, steps, state = None, ne = None):
         bi = tmp.norm()
         if bi != 0:
             vi = tmp / bi
-        tmp = vi.Hf_state(Hf)
+        if flag_tuple:
+            tmp = vi.tensor_state(Hf[0]) + vi.tensor_state(Hf[1]) 
+        else:
+            tmp = vi.Hf_state(Hf)
         ai = vi @ tmp
         tmp -= ai * vi 
         tmp -= bi * states[i - 1]
@@ -367,18 +385,24 @@ def lanczos_range(Hf, steps, state = None, ne = None):
     eigs, _ = eigh_tridiagonal(A,B)
     return max(eigs), min(eigs)
 
-def lanczos_total_range(Hf, steps = 2, e_nums = [], multiprocessing = True):
+def lanczos_total_range(Hf, steps = 2, states = [], e_nums = [], multiprocessing = True):
     """Returns the largest and the smallest eigenvalue from Lanczos iterations with given number of steps,
     for all possible number of electrons. Multiprocessing will parallelize the computation for all possible 
-    number of electrons. e_nums is an indicator for the number of electrons to check for the highest and lowest energy
-    state. If not specified, the function will search through all possible values. Steps is set to 2 on default as 
+    number of electrons. states specifies the initial states for the Hamiltonian.
+    e_nums is an indicator for the number of electrons subspaces to check for the highest and lowest energy. If 
+    not specified states or e_nums, the function will search through all possible values. Steps is set to 2 on default as 
     experimented that 2 iterations is capable of estimating within an accuracy of about 95%.
     """
-    n = of.utils.count_qubits(Hf)
+    if isinstance(Hf, of.FermionOperator):
+        n = of.utils.count_qubits(Hf)
+    else:
+        n = Hf[0].shape[0]
     if multiprocessing:
         num_processes = os.cpu_count()
         with Pool(processes=num_processes) as pool:
-            if len(e_nums) != 0:
+            if len(states) != 0:
+                res = pool.starmap(lanczos_range, [(Hf, steps, st, None) for st in states])
+            elif len(e_nums) != 0:
                 res = pool.starmap(lanczos_range, [(Hf, steps, None, ne) for ne in e_nums])
             else:
                 res = pool.starmap(lanczos_range, [(Hf, steps, None, ne) for ne in range(n)])
@@ -387,9 +411,16 @@ def lanczos_total_range(Hf, steps = 2, e_nums = [], multiprocessing = True):
     else:
         E_max = -1e10
         E_min = 1e10
-        for ne in range(n):
-            states, A, B = lanczos(Hf, steps = steps, ne = ne)
-            eigs, _ = eigh_tridiagonal(A,B)
-            E_max = max(max(eigs), E_max)
-            E_min = min(min(eigs), E_min)
+        if len(states) != 0:
+            for st in states:
+                states, A, B = lanczos(Hf, steps = steps, state = state)
+                eigs, _ = eigh_tridiagonal(A,B)
+                E_max = max(max(eigs), E_max)
+                E_min = min(min(eigs), E_min)
+        else:
+            for ne in range(n):
+                states, A, B = lanczos(Hf, steps = steps, ne = ne)
+                eigs, _ = eigh_tridiagonal(A,B)
+                E_max = max(max(eigs), E_max)
+                E_min = min(min(eigs), E_min)
     return E_max, E_min
